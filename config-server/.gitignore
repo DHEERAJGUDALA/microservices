@@ -31,8 +31,3 @@ build/
 
 ### VS Code ###
 .vscode/
-/src/main/resources/application.properties
-/.mvn/wrapper/maven-wrapper.properties
-/src/main/resources/configs/order-service.properties
-/src/main/resources/configs/product-service.properties
-/src/main/resources/configs/user-service.properties
