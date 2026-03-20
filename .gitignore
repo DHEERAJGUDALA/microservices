@@ -32,3 +32,4 @@ Thumbs.db
 # Environment
 .env
 *.env
+/order-service/src/main/resources/application.properties
