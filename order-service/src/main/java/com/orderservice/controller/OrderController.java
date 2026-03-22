@@ -4,7 +4,11 @@ import com.orderservice.dto.OrderRequest;
 import com.orderservice.dto.OrderResponse;
 import com.orderservice.entity.Order;
 import com.orderservice.service.OrderService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -20,9 +24,13 @@ public class OrderController {
 
     /**
      * POST /api/orders - Create a new order
+     * 
+     * @Valid triggers Bean Validation on OrderRequest
+     * If validation fails, MethodArgumentNotValidException is thrown
+     * and handled by GlobalExceptionHandler
      */
     @PostMapping
-    public ResponseEntity<OrderResponse> createOrder(@RequestBody OrderRequest request) {
+    public ResponseEntity<OrderResponse> createOrder(@Valid @RequestBody OrderRequest request) {
         OrderResponse response = orderService.createOrder(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
@@ -37,11 +45,19 @@ public class OrderController {
     }
 
     /**
-     * GET /api/orders - Get all orders
+     * GET /api/orders - Get all orders with pagination
+     * 
+     * @PageableDefault sets default page size to 20 if not specified
+     * 
+     * Example usage:
+     *   /api/orders                    -> page 0, size 20
+     *   /api/orders?page=1&size=10     -> page 1, size 10
+     *   /api/orders?sort=createdAt,desc -> sorted by createdAt descending
      */
     @GetMapping
-    public ResponseEntity<List<OrderResponse>> getAllOrders() {
-        List<OrderResponse> orders = orderService.getAllOrders();
+    public ResponseEntity<Page<OrderResponse>> getAllOrders(
+            @PageableDefault(size = 20) Pageable pageable) {
+        Page<OrderResponse> orders = orderService.getAllOrders(pageable);
         return ResponseEntity.ok(orders);
     }
 
@@ -56,6 +72,8 @@ public class OrderController {
 
     /**
      * PATCH /api/orders/{id}/status - Update order status
+     * 
+     * Example: PATCH /api/orders/1/status?status=SHIPPED
      */
     @PatchMapping("/{id}/status")
     public ResponseEntity<OrderResponse> updateOrderStatus(
