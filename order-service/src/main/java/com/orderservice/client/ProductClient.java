@@ -10,8 +10,11 @@ import org.springframework.web.bind.annotation.PathVariable;
  * 
  * The name "product-service" must match the spring.application.name
  * of the product-service registered in Eureka.
+ * 
+ * fallback = ProductClientFallback.class:
+ * - When product-service is down or circuit is open, fallback is used
  */
-@FeignClient(name = "product-service")
+@FeignClient(name = "product-service", fallback = ProductClientFallback.class)
 public interface ProductClient {
 
     @GetMapping("/api/products/{id}")

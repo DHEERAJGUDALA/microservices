@@ -15,8 +15,12 @@ import org.springframework.web.bind.annotation.PathVariable;
  * - Feign uses the service name to look up instances from Eureka
  * - Automatic load balancing if multiple instances exist
  * - No hardcoded URLs needed!
+ * 
+ * fallback = UserClientFallback.class:
+ * - When user-service is down or circuit is open, fallback is used
+ * - Provides graceful degradation instead of hard failure
  */
-@FeignClient(name = "user-service")
+@FeignClient(name = "user-service", fallback = UserClientFallback.class)
 public interface UserClient {
 
     @GetMapping("/api/users/{id}")
