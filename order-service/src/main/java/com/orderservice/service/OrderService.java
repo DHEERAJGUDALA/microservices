@@ -4,9 +4,12 @@ import com.orderservice.client.ProductClient;
 import com.orderservice.client.UserClient;
 import com.orderservice.dto.*;
 import com.orderservice.entity.Order;
+import com.orderservice.exception.OrderNotFoundException;
 import com.orderservice.repository.OrderRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -28,12 +31,17 @@ public class OrderService {
      * 2. Validates product exists and gets price from product-service
      * 3. Calculates total price
      * 4. Saves order to database
+     * 
+     * If user-service or product-service is down, Feign fallback kicks in
+     * and throws ServiceUnavailableException.
      */
     @Transactional
     public OrderResponse createOrder(OrderRequest request) {
         log.info("Creating order for userId={}, productId={}", request.getUserId(), request.getProductId());
 
         // Call user-service to validate user exists
+        // If user-service is down, fallback throws ServiceUnavailableException
+        // If user not found, Feign throws FeignException with 404
         UserDto user = userClient.getUserById(request.getUserId());
         log.info("Found user: {}", user.getName());
 
@@ -61,10 +69,12 @@ public class OrderService {
 
     /**
      * Gets an order by ID with enriched user and product details.
+     * 
+     * @throws OrderNotFoundException if order not found (mapped to 404)
      */
     public OrderResponse getOrderById(Long id) {
         Order order = orderRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Order not found with id: " + id));
+                .orElseThrow(() -> new OrderNotFoundException(id));
 
         // Fetch user and product details for enriched response
         UserDto user = userClient.getUserById(order.getUserId());
@@ -74,23 +84,28 @@ public class OrderService {
     }
 
     /**
-     * Gets all orders with enriched details.
+     * Gets all orders with pagination and enriched details.
+     * 
+     * Note: This still makes N Feign calls for N orders.
+     * In production, consider:
+     * 1. Caching user/product data
+     * 2. Batch API endpoints in user-service/product-service
+     * 3. Async parallel calls
      */
-    public List<OrderResponse> getAllOrders() {
-        return orderRepository.findAll().stream()
+    public Page<OrderResponse> getAllOrders(Pageable pageable) {
+        return orderRepository.findAll(pageable)
                 .map(order -> {
                     UserDto user = userClient.getUserById(order.getUserId());
                     ProductDto product = productClient.getProductById(order.getProductId());
                     return buildOrderResponse(order, user, product);
-                })
-                .toList();
+                });
     }
 
     /**
      * Gets all orders for a specific user.
      */
     public List<OrderResponse> getOrdersByUserId(Long userId) {
-        // Validate user exists first
+        // Validate user exists first (throws if not found or service down)
         UserDto user = userClient.getUserById(userId);
 
         return orderRepository.findByUserId(userId).stream()
@@ -103,14 +118,17 @@ public class OrderService {
 
     /**
      * Updates order status.
+     * 
+     * @throws OrderNotFoundException if order not found
      */
     @Transactional
     public OrderResponse updateOrderStatus(Long id, Order.OrderStatus newStatus) {
         Order order = orderRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Order not found with id: " + id));
+                .orElseThrow(() -> new OrderNotFoundException(id));
 
         order.setStatus(newStatus);
         Order updatedOrder = orderRepository.save(order);
+        log.info("Order {} status updated to {}", id, newStatus);
 
         UserDto user = userClient.getUserById(order.getUserId());
         ProductDto product = productClient.getProductById(order.getProductId());
@@ -120,11 +138,13 @@ public class OrderService {
 
     /**
      * Deletes an order.
+     * 
+     * @throws OrderNotFoundException if order not found
      */
     @Transactional
     public void deleteOrder(Long id) {
         if (!orderRepository.existsById(id)) {
-            throw new RuntimeException("Order not found with id: " + id);
+            throw new OrderNotFoundException(id);
         }
         orderRepository.deleteById(id);
         log.info("Order deleted with id={}", id);
