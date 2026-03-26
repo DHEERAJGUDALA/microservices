@@ -2,18 +2,22 @@ package com.orderservice.service;
 
 import com.orderservice.client.ProductClient;
 import com.orderservice.client.UserClient;
+import com.orderservice.config.RabbitMQConfig;
 import com.orderservice.dto.*;
 import com.orderservice.entity.Order;
+import com.orderservice.event.OrderCreatedEvent;
 import com.orderservice.exception.OrderNotFoundException;
 import com.orderservice.repository.OrderRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Service
@@ -24,6 +28,7 @@ public class OrderService {
     private final OrderRepository orderRepository;
     private final UserClient userClient;       // Feign client for user-service
     private final ProductClient productClient; // Feign client for product-service
+    private final RabbitTemplate rabbitTemplate; // For publishing events to RabbitMQ
 
     /**
      * Creates a new order.
@@ -64,7 +69,27 @@ public class OrderService {
         Order savedOrder = orderRepository.save(order);
         log.info("Order created with id={}", savedOrder.getId());
 
+        // Publish event to RabbitMQ for async processing (notifications, etc.)
+        publishOrderCreatedEvent(savedOrder);
+
         return buildOrderResponse(savedOrder, user, product);
+    }
+
+    /**
+     * Publishes OrderCreatedEvent to RabbitMQ.
+     * Consumers (notification-service, etc.) will process this asynchronously.
+     */
+    private void publishOrderCreatedEvent(Order order) {
+        OrderCreatedEvent event = new OrderCreatedEvent(
+                order.getId(),
+                order.getUserId(),
+                order.getProductId(),
+                order.getQuantity(),
+                LocalDateTime.now()
+        );
+
+        rabbitTemplate.convertAndSend(RabbitMQConfig.EXCHANGE_NAME, "", event);
+        log.info("Published OrderCreatedEvent for orderId={}", order.getId());
     }
 
     /**
