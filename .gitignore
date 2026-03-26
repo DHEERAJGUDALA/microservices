@@ -34,3 +34,8 @@ Thumbs.db
 *.env
 /order-service/src/main/resources/application.properties
 /api-gateway/src/main/resources/application.properties
+
+# Config Server sensitive configs (contain DB/RabbitMQ credentials)
+/config-server/src/main/resources/configs/user-service.properties
+/config-server/src/main/resources/configs/product-service.properties
+/config-server/src/main/resources/configs/order-service.properties
