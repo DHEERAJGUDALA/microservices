@@ -60,10 +60,29 @@ public class Order {
     }
 
     public enum OrderStatus {
+        // Initial state — order exists but Saga hasn't started yet
         PENDING,
+
+        // Saga Step 1: Payment Service received the event and is processing
+        PAYMENT_PROCESSING,
+
+        // Saga Step 2: Payment succeeded, now waiting for inventory
+        PAYMENT_COMPLETED,
+
+        // Saga terminal failure: payment was declined by gateway
+        PAYMENT_FAILED,
+
+        // Saga Step 3: Inventory Service is reserving stock
+        INVENTORY_RESERVING,
+
+        // Saga SUCCESS: payment charged + stock reserved — order is live
         CONFIRMED,
+
+        // Saga FAILURE: something went wrong, compensating transactions ran
+        CANCELLED,
+
+        // Post-saga lifecycle states
         SHIPPED,
-        DELIVERED,
-        CANCELLED
+        DELIVERED
     }
 }
