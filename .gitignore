@@ -39,3 +39,5 @@ Thumbs.db
 /config-server/src/main/resources/configs/user-service.properties
 /config-server/src/main/resources/configs/product-service.properties
 /config-server/src/main/resources/configs/order-service.properties
+/config-server/src/main/resources/configs/inventory-service.properties
+/config-server/src/main/resources/configs/payment-service.properties

@@ -2,7 +2,7 @@ package com.orderservice.service;
 
 import com.orderservice.client.ProductClient;
 import com.orderservice.client.UserClient;
-import com.orderservice.config.RabbitMQConfig;
+import com.orderservice.config.KafkaTopicConfig;
 import com.orderservice.dto.*;
 import com.orderservice.entity.Order;
 import com.orderservice.event.OrderCreatedEvent;
@@ -10,7 +10,7 @@ import com.orderservice.exception.OrderNotFoundException;
 import com.orderservice.repository.OrderRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -26,38 +26,22 @@ import java.util.List;
 public class OrderService {
 
     private final OrderRepository orderRepository;
-    private final UserClient userClient;       // Feign client for user-service
-    private final ProductClient productClient; // Feign client for product-service
-    private final RabbitTemplate rabbitTemplate; // For publishing events to RabbitMQ
+    private final UserClient userClient;
+    private final ProductClient productClient;
+    private final KafkaTemplate<String, Object> kafkaTemplate;
 
-    /**
-     * Creates a new order.
-     * 1. Validates user exists by calling user-service
-     * 2. Validates product exists and gets price from product-service
-     * 3. Calculates total price
-     * 4. Saves order to database
-     * 
-     * If user-service or product-service is down, Feign fallback kicks in
-     * and throws ServiceUnavailableException.
-     */
     @Transactional
     public OrderResponse createOrder(OrderRequest request) {
         log.info("Creating order for userId={}, productId={}", request.getUserId(), request.getProductId());
 
-        // Call user-service to validate user exists
-        // If user-service is down, fallback throws ServiceUnavailableException
-        // If user not found, Feign throws FeignException with 404
         UserDto user = userClient.getUserById(request.getUserId());
         log.info("Found user: {}", user.getName());
 
-        // Call product-service to validate product and get price
         ProductDto product = productClient.getProductById(request.getProductId());
         log.info("Found product: {} with price {}", product.getName(), product.getPrice());
 
-        // Calculate total price
         BigDecimal totalPrice = product.getPrice().multiply(BigDecimal.valueOf(request.getQuantity()));
 
-        // Build and save order
         Order order = Order.builder()
                 .userId(request.getUserId())
                 .productId(request.getProductId())
@@ -69,54 +53,38 @@ public class OrderService {
         Order savedOrder = orderRepository.save(order);
         log.info("Order created with id={}", savedOrder.getId());
 
-        // Publish event to RabbitMQ for async processing (notifications, etc.)
         publishOrderCreatedEvent(savedOrder);
 
         return buildOrderResponse(savedOrder, user, product);
     }
 
-    /**
-     * Publishes OrderCreatedEvent to RabbitMQ.
-     * Consumers (notification-service, etc.) will process this asynchronously.
-     */
     private void publishOrderCreatedEvent(Order order) {
         OrderCreatedEvent event = new OrderCreatedEvent(
                 order.getId(),
                 order.getUserId(),
                 order.getProductId(),
                 order.getQuantity(),
+                order.getTotalPrice(),
                 LocalDateTime.now()
         );
 
-        rabbitTemplate.convertAndSend(RabbitMQConfig.EXCHANGE_NAME, "", event);
-        log.info("Published OrderCreatedEvent for orderId={}", order.getId());
+        // Key = orderId as String. All events for orderId=42 go to the same Kafka partition,
+        // guaranteeing ordering for that order's lifecycle (create → pay → reserve → confirm).
+        kafkaTemplate.send(KafkaTopicConfig.ORDER_EVENTS_TOPIC,
+                order.getId().toString(), event);
+        log.info("Published OrderCreatedEvent to Kafka for orderId={}", order.getId());
     }
 
-    /**
-     * Gets an order by ID with enriched user and product details.
-     * 
-     * @throws OrderNotFoundException if order not found (mapped to 404)
-     */
     public OrderResponse getOrderById(Long id) {
         Order order = orderRepository.findById(id)
                 .orElseThrow(() -> new OrderNotFoundException(id));
 
-        // Fetch user and product details for enriched response
         UserDto user = userClient.getUserById(order.getUserId());
         ProductDto product = productClient.getProductById(order.getProductId());
 
         return buildOrderResponse(order, user, product);
     }
 
-    /**
-     * Gets all orders with pagination and enriched details.
-     * 
-     * Note: This still makes N Feign calls for N orders.
-     * In production, consider:
-     * 1. Caching user/product data
-     * 2. Batch API endpoints in user-service/product-service
-     * 3. Async parallel calls
-     */
     public Page<OrderResponse> getAllOrders(Pageable pageable) {
         return orderRepository.findAll(pageable)
                 .map(order -> {
@@ -126,11 +94,7 @@ public class OrderService {
                 });
     }
 
-    /**
-     * Gets all orders for a specific user.
-     */
     public List<OrderResponse> getOrdersByUserId(Long userId) {
-        // Validate user exists first (throws if not found or service down)
         UserDto user = userClient.getUserById(userId);
 
         return orderRepository.findByUserId(userId).stream()
@@ -141,11 +105,6 @@ public class OrderService {
                 .toList();
     }
 
-    /**
-     * Updates order status.
-     * 
-     * @throws OrderNotFoundException if order not found
-     */
     @Transactional
     public OrderResponse updateOrderStatus(Long id, Order.OrderStatus newStatus) {
         Order order = orderRepository.findById(id)
@@ -161,11 +120,6 @@ public class OrderService {
         return buildOrderResponse(updatedOrder, user, product);
     }
 
-    /**
-     * Deletes an order.
-     * 
-     * @throws OrderNotFoundException if order not found
-     */
     @Transactional
     public void deleteOrder(Long id) {
         if (!orderRepository.existsById(id)) {
@@ -175,9 +129,6 @@ public class OrderService {
         log.info("Order deleted with id={}", id);
     }
 
-    /**
-     * Helper method to build enriched OrderResponse.
-     */
     private OrderResponse buildOrderResponse(Order order, UserDto user, ProductDto product) {
         return OrderResponse.builder()
                 .id(order.getId())
